@@ -1,0 +1,602 @@
+<!DOCTYPE html>  
+<html lang="bn">  
+<head>  
+    <meta charset="UTF-8">  
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+    <title>FIJIX.co AI - Platform</title>  
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">  
+    
+    <!-- Firebase SDKs (v9 Modular) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, increment } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+
+        // TODO: আপনার ফায়ারবেস কনফিগারেশন এখানে বসান
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // অ্যাপে ঢোকার সাথে সাথে চেক করবে ইউজার লগইন করা আছে কিনা
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // লগইন করা থাকলে হোম পেজ দেখাও
+                document.querySelectorAll('.app-page').forEach(p => p.classList.remove('active-page'));
+                document.getElementById('page-home').classList.add('active-page');
+                document.querySelector('.bottom-nav').style.display = 'flex';
+
+                const uid = user.uid;
+                document.getElementById('user-id-display').innerText = uid.substring(0, 6);
+                
+                const userRef = doc(db, "users", uid);
+
+                // রিয়েল-টাইম লাইভ ব্যালেন্স আপডেট
+                onSnapshot(userRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        document.getElementById('profile-main-balance').innerText = '৳ ' + (data.mainBalance || 0).toLocaleString();
+                        document.getElementById('profile-income').innerText = '৳ ' + (data.income || 0).toLocaleString();
+                        document.getElementById('profile-total-balance').innerText = '৳ ' + (data.totalBalance || 0).toLocaleString();
+                        document.getElementById('profile-total-withdraw').innerText = '৳ ' + (data.totalWithdraw || 0).toLocaleString();
+                    }
+                });
+
+                // ডিপোজিট হ্যান্ডলার
+                window.handleDepositSubmit = async function() {
+                    const amountInput = document.getElementById('depAmount').value;
+                    const amount = parseFloat(amountInput);
+                    if (!amount || amount <= 0) {
+                        alert('দয়া করে সঠিক অ্যামাউন্ট লিখুন।');
+                        return;
+                    }
+
+                    try {
+                        await updateDoc(userRef, {
+                            mainBalance: increment(amount),
+                            totalBalance: increment(amount)
+                        });
+                        alert('রিচার্জ সফলভাবে জমা হয়েছে এবং ব্যালেন্স যোগ হয়েছে!');
+                        document.getElementById('depAmount').value = '';
+                        switchPage('page-home');
+                    } catch (error) {
+                        console.error("Deposit error: ", error);
+                        alert('রিচার্জ সম্পন্ন করতে সমস্যা হয়েছে।');
+                    }
+                };
+
+                // উইথড্র হ্যান্ডলার
+                window.handleWithdrawSubmit = async function() {
+                    const amountInput = document.getElementById('wdAmount').value;
+                    const amount = parseFloat(amountInput);
+                    if (!amount || amount <= 0) {
+                        alert('দয়া করে সঠিক অ্যামাউন্ট লিখুন।');
+                        return;
+                    }
+
+                    const docSnap = await getDoc(userRef);
+                    if (docSnap.exists() && docSnap.data().mainBalance >= amount) {
+                        try {
+                            await updateDoc(userRef, {
+                                mainBalance: increment(-amount),
+                                totalWithdraw: increment(amount)
+                            });
+                            alert('উত্তোলন সফল হয়েছে এবং ব্যালেন্স কেটে নেওয়া হয়েছে!');
+                            document.getElementById('wdAmount').value = '';
+                            switchPage('page-home');
+                        } catch (error) {
+                            console.error("Withdraw error: ", error);
+                            alert('উত্তোলন সম্পন্ন করতে সমস্যা হয়েছে।');
+                        }
+                    } else {
+                        alert('আপনার অ্যাকাউন্টে পর্যাপ্ত মেইন ব্যালেন্স নেই!');
+                    }
+                };
+
+            } else {
+                // লগইন না করা থাকলে অথ (লগইন/রেজিস্ট্রেশন) পেজ দেখাও
+                document.querySelectorAll('.app-page').forEach(p => p.classList.remove('active-page'));
+                document.getElementById('page-auth').classList.add('active-page');
+                document.querySelector('.bottom-nav').style.display = 'none';
+            }
+        });
+
+        // রেজিস্ট্রেশন ফাংশন (সফল হলে হোম পেজে যাবে)
+        window.handleRegister = async function() {
+            const email = document.getElementById('regEmail').value;
+            const pass = document.getElementById('regPass').value;
+            if(!email || !pass) {
+                alert('দয়া করে ইমেল এবং পাসওয়ার্ড দিন।');
+                return;
+            }
+            try {
+                const userCred = await createUserWithEmailAndPassword(auth, email, pass);
+                const uid = userCred.user.uid;
+                await setDoc(doc(db, "users", uid), {
+                    mainBalance: 5000.00,
+                    income: 1850.00,
+                    totalBalance: 12500.00,
+                    totalWithdraw: 3000.00
+                });
+                alert('রেজিস্ট্রেশন সফল হয়েছে!');
+                switchPage('page-home');
+            } catch (error) {
+                alert('রেজিস্ট্রেশন ত্রুটি: ' + error.message);
+            }
+        };
+
+        // লগইন ফাংশন (সফল হলে হোম পেজে যাবে)
+        window.handleLogin = async function() {
+            const email = document.getElementById('loginEmail').value;
+            const pass = document.getElementById('loginPass').value;
+            if(!email || !pass) {
+                alert('দয়া করে ইমেল এবং পাসওয়ার্ড দিন।');
+                return;
+            }
+            try {
+                await signInWithEmailAndPassword(auth, email, pass);
+                alert('লগইন সফল হয়েছে!');
+                switchPage('page-home');
+            } catch (error) {
+                alert('লগইন ব্যর্থ হয়েছে: ' + error.message);
+            }
+        };
+
+        // লগআউট ফাংশন
+        window.handleLogout = async function() {
+            await signOut(auth);
+            location.reload();
+        };
+    </script>
+
+    <style>  
+        :root {  
+            --primary-blue: #00b0ff;  
+            --secondary-blue: #0061ff;  
+            --bg-color: #f2f5f9;  
+            --card-bg: #ffffff;  
+            --text-dark: #333333;  
+            --text-light: #666666;  
+        }  
+        * {  
+            margin: 0;  
+            padding: 0;  
+            box-sizing: border-box;  
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;  
+        }  
+
+        body {  
+            background-color: var(--bg-color);  
+            color: var(--text-dark);  
+            padding-bottom: 75px;  
+        }  
+
+        .app-page {  
+            display: none;  
+        }  
+        .app-page.active-page {  
+            display: block;  
+        }  
+
+        .top-header {  
+            background: linear-gradient(180deg, #00b4db 0%, #0083b0 100%);  
+            color: white;  
+            padding: 15px;  
+            border-bottom-left-radius: 25px;  
+            border-bottom-right-radius: 25px;  
+            box-shadow: 0 4px 15px rgba(0, 131, 176, 0.3);  
+        }  
+
+        .header-top-row {  
+            display: flex;  
+            justify-content: space-between;  
+            align-items: center;  
+            margin-bottom: 12px;  
+        }  
+
+        .top-pill-btn {  
+            background: rgba(255, 255, 255, 0.25);  
+            border: none;  
+            padding: 6px 14px;  
+            border-radius: 20px;  
+            color: white;  
+            font-size: 12px;  
+            cursor: pointer;  
+            display: flex;  
+            align-items: center;  
+            gap: 5px;  
+        }  
+
+        .ai-banner-box {  
+            background: rgba(255, 255, 255, 0.2);  
+            border-radius: 12px;  
+            padding: 12px 15px;  
+            display: flex;  
+            align-items: center;  
+            justify-content: space-between;  
+        }  
+
+        .ai-logo-text h2 {  
+            font-size: 22px;  
+            letter-spacing: 1px;  
+            font-weight: 800;  
+        }  
+
+        .ai-logo-text span {  
+            font-size: 11px;  
+            background: #ffffff33;  
+            padding: 2px 6px;  
+            border-radius: 4px;  
+        }  
+
+        .marquee-box {  
+            background: #fff8e1;  
+            color: #8f6b00;  
+            padding: 10px 15px;  
+            margin: 12px 15px;  
+            border-radius: 8px;  
+            font-size: 12px;  
+            display: flex;  
+            align-items: center;  
+            box-shadow: 0 2px 5px rgba(0,0,0,0.03);  
+            overflow: hidden;  
+            white-space: nowrap;  
+        }  
+
+        .marquee-box i {  
+            color: #ffa000;  
+            margin-right: 8px;  
+            font-size: 15px;  
+        }  
+
+        .marquee-content {  
+            display: inline-block;  
+            animation: scrollText 14s linear infinite;  
+        }  
+
+        @keyframes scrollText {  
+            0% { transform: translateX(100%); }  
+            100% { transform: translateX(-100%); }  
+        }  
+
+        .container {  
+            padding: 0 15px;  
+        }  
+
+        .menu-grid-4 {  
+            display: grid;  
+            grid-template-columns: repeat(4, 1fr);  
+            gap: 8px;  
+            margin-bottom: 12px;  
+        }  
+
+        .menu-grid-item {  
+            background: var(--card-bg);  
+            padding: 12px 5px;  
+            border-radius: 12px;  
+            text-align: center;  
+            box-shadow: 0 2px 6px rgba(0,0,0,0.04);  
+            cursor: pointer;  
+            position: relative;  
+            transition: 0.2s;  
+        }  
+
+        .menu-grid-item:active {  
+            transform: scale(0.96);  
+        }  
+
+        .menu-grid-item i {  
+            font-size: 20px;  
+            color: #0083b0;  
+            margin-bottom: 6px;  
+        }  
+
+        .menu-grid-item span {  
+            display: block;  
+            font-size: 11px;  
+            font-weight: 600;  
+            color: var(--text-dark);  
+        }  
+
+        .badge-tag {  
+            position: absolute;  
+            top: 4px;  
+            right: 4px;  
+            background: #ff3d00;  
+            color: white;  
+            font-size: 8px;  
+            padding: 1px 4px;  
+            border-radius: 4px;  
+            font-weight: bold;  
+        }  
+
+        .support-banner {  
+            background: white;  
+            padding: 12px 15px;  
+            border-radius: 10px;  
+            display: flex;  
+            align-items: center;  
+            gap: 12px;  
+            margin-bottom: 10px;  
+            box-shadow: 0 2px 5px rgba(0,0,0,0.03);  
+            cursor: pointer;  
+        }  
+
+        .support-banner i {  
+            color: #25d366;  
+            font-size: 24px;  
+        }  
+
+        .support-banner span {  
+            font-weight: 600;  
+            font-size: 13px;  
+        }  
+
+        .promo-gradient-card {  
+            background: linear-gradient(135deg, #2b5876 0%, #4e4376 100%);  
+            color: white;  
+            padding: 15px;  
+            border-radius: 12px;  
+            display: flex;  
+            justify-content: space-between;  
+            align-items: center;  
+            margin-bottom: 15px;  
+            box-shadow: 0 4px 10px rgba(43, 88, 118, 0.3);  
+            cursor: pointer;  
+        }  
+
+        .promo-gradient-card h4 {  
+            font-size: 14px;  
+            margin-bottom: 3px;  
+        }  
+
+        .promo-gradient-card p {  
+            font-size: 11px;  
+            opacity: 0.85;  
+        }  
+
+        .section-header {  
+            font-size: 14px;  
+            font-weight: bold;  
+            margin-bottom: 10px;  
+            color: var(--text-dark);  
+        }  
+
+        .charity-card {  
+            background: white;  
+            border-radius: 12px;  
+            padding: 12px;  
+            margin-bottom: 15px;  
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);  
+        }  
+
+        .charity-card p {  
+            font-size: 12px;  
+            color: var(--text-light);  
+            margin-bottom: 10px;  
+        }  
+
+        .charity-images {  
+            display: grid;  
+            grid-template-columns: 1fr 1fr;  
+            gap: 8px;  
+        }  
+
+        .charity-images img {  
+            width: 100%;  
+            height: 90px;  
+            object-fit: cover;  
+            border-radius: 8px;  
+        }  
+
+        .page-header-bar {  
+            background: white;  
+            padding: 15px;  
+            display: flex;  
+            align-items: center;  
+            gap: 15px;  
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);  
+            margin-bottom: 15px;  
+        }  
+
+        .page-header-bar i {  
+            font-size: 18px;  
+            cursor: pointer;  
+            color: #0083b0;  
+        }  
+
+        .page-header-bar h3 {  
+            font-size: 16px;  
+        }  
+
+        .form-card {  
+            background: white;  
+            padding: 15px;  
+            border-radius: 12px;  
+            margin: 0 15px 15px 15px;  
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);  
+        }  
+
+        .input-group {  
+            margin-bottom: 12px;  
+        }  
+
+        .input-group label {  
+            display: block;  
+            font-size: 12px;  
+            font-weight: 600;  
+            margin-bottom: 5px;  
+            color: var(--text-dark);  
+        }  
+
+        .input-group select, .input-group input {  
+            width: 100%;  
+            padding: 10px;  
+            border: 1px solid #ddd;  
+            border-radius: 8px;  
+            font-size: 13px;  
+            outline: none;  
+        }  
+
+        .submit-action-btn {  
+            width: 100%;  
+            background: linear-gradient(135deg, #00b4db 0%, #0083b0 100%);  
+            color: white;  
+            border: none;  
+            padding: 12px;  
+            border-radius: 8px;  
+            font-weight: bold;  
+            font-size: 14px;  
+            cursor: pointer;  
+            margin-top: 5px;  
+        }  
+
+        .team-node-box {  
+            text-align: center;  
+            background: #f8fafc;  
+            border: 1px solid #e2e8f0;  
+            padding: 10px;  
+            border-radius: 8px;  
+            margin-bottom: 10px;  
+        }  
+        .team-level-row {  
+            display: flex;  
+            justify-content: center;  
+            gap: 10px;  
+            margin-top: 8px;  
+        }  
+
+        .bottom-nav {  
+            position: fixed;  
+            bottom: 0;  
+            left: 0;  
+            width: 100%;  
+            background: white;  
+            display: flex;  
+            justify-content: space-around;  
+            padding: 8px 0;  
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.08);  
+            z-index: 1000;  
+        }  
+
+        .nav-link {  
+            text-align: center;  
+            color: #777;  
+            text-decoration: none;  
+            font-size: 10px;  
+            flex: 1;  
+            cursor: pointer;  
+        }  
+
+        .nav-link i {  
+            display: block;  
+            font-size: 18px;  
+            margin-bottom: 2px;  
+        }  
+
+        .nav-link.active {  
+            color: #0083b0;  
+            font-weight: bold;  
+        }  
+
+        /* Spin Wheel Modal Styles */  
+        .modal-overlay {  
+            display: none;  
+            position: fixed;  
+            top: 0; left: 0; width: 100%; height: 100%;  
+            background: rgba(0,0,0,0.6);  
+            z-index: 2000;  
+            justify-content: center;  
+            align-items: center;  
+        }  
+        .spin-container {  
+            background: white;  
+            width: 90%;  
+            max-width: 340px;  
+            border-radius: 16px;  
+            padding: 20px;  
+            text-align: center;  
+            position: relative;  
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);  
+        }  
+        .spin-close {  
+            position: absolute;  
+            top: 10px;  
+            right: 15px;  
+            font-size: 18px;  
+            cursor: pointer;  
+            color: #666;  
+        }  
+        .wheel-box {  
+            position: relative;  
+            width: 220px;  
+            height: 220px;  
+            margin: 20px auto;  
+            border-radius: 50%;  
+            border: 6px solid #0083b0;  
+            overflow: hidden;  
+            background: #e0f7fa;  
+            transition: transform 3s cubic-bezier(0.15, 0.85, 0.15, 1);  
+        }  
+        .wheel-item {  
+            position: absolute;  
+            width: 50%;  
+            height: 50%;  
+            transform-origin: 100% 100%;  
+            left: 0; top: 0;  
+            display: flex;  
+            align-items: center;  
+            justify-content: center;  
+            font-size: 11px;  
+            font-weight: bold;  
+            color: #333;  
+            border-right: 1px solid #b2ebf2;  
+            border-bottom: 1px solid #b2ebf2;  
+        }  
+        .wheel-item:nth-child(1) { transform: rotate(0deg) skewY(-30deg); background: #fff; }  
+        .wheel-item:nth-child(2) { transform: rotate(90deg) skewY(-30deg); background: #e0f7fa; }  
+        .wheel-item:nth-child(3) { transform: rotate(180deg) skewY(-30deg); background: #b2ebf2; }  
+        .wheel-item:nth-child(4) { transform: rotate(270deg) skewY(-30deg); background: #80deea; }  
+        
+        .wheel-pointer {  
+            position: absolute;  
+            top: -12px;  
+            left: 50%;  
+            transform: translateX(-50%);  
+            font-size: 26px;  
+            color: #ff3d00;  
+            z-index: 10;  
+            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.3));  
+        }  
+        .spin-btn-center {  
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);  
+            color: white;  
+            border: none;  
+            padding: 10px 25px;  
+            border-radius: 25px;  
+            font-weight: bold;  
+            font-size: 14px;  
+            cursor: pointer;  
+            box-shadow: 0 4px 10px rgba(255,65,108,0.4);  
+            margin-top: 10px;  
+        }  
+    </style>
+</head>  
+<body>  
+
+<!-- ================= 0. AUTH PAGE (LOGIN & REGISTER) ================= -->  
+<div id="page-auth" class="app-page">  
+    <div class="top-header" style="text-align: center; border-radius: 0 0 25px 25px; padding: 30px 15px;">  
+        <h2>FIJIX.co AI</h2>  
+        <p style="font-size: 12px; opacity: 0.9;">দয়া করে লগইন বা রেজিস্ট্রেশন করুন</p>  
+    </div>  
+
+    <div class="form-card" style="marg
